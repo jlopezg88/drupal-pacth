@@ -1,0 +1,202 @@
+diff --git a/core/modules/field_ui/src/Form/FieldConfigEditForm.php b/core/modules/field_ui/src/Form/FieldConfigEditForm.php
+index ff6d157..78f4dfe 100644
+--- a/core/modules/field_ui/src/Form/FieldConfigEditForm.php
++++ b/core/modules/field_ui/src/Form/FieldConfigEditForm.php
+@@ -75,7 +75,7 @@ public function form(array $form, FormStateInterface $form_state) {
+     $ids = (object) array(
+       'entity_type' => $this->entity->getTargetEntityTypeId(),
+       'bundle' => $this->entity->getTargetBundle(),
+-      'entity_id' => NULL
++      'entity_id' => NULL,
+     );
+     $form['#entity'] = _field_create_entity_from_ids($ids);
+     $items = $form['#entity']->get($this->entity->getName());
+@@ -114,6 +114,21 @@ public function form(array $form, FormStateInterface $form_state) {
+    */
+   protected function actions(array $form, FormStateInterface $form_state) {
+     $actions = parent::actions($form, $form_state);
++
++    // When adding a new field, set up a Previous button for a simple wizard.
++    if ($this->getRequest()->query->has('destinations')) {
++      $actions['previous'] = [
++        '#type' => 'submit',
++        '#id' => 'previous',
++        '#value' => $this->t('Previous'),
++        '#attributes' => [
++          'class' => ['button'],
++        ],
++        '#weight' => 0,
++        '#submit' => $actions['submit']['#submit'],
++      ];
++    }
++
+     $actions['submit']['#value'] = $this->t('Save settings');
+ 
+     if (!$this->entity->isNew()) {
+@@ -178,7 +193,24 @@ public function save(array $form, FormStateInterface $form_state) {
+     drupal_set_message($this->t('Saved %label configuration.', array('%label' => $this->entity->getLabel())));
+ 
+     $request = $this->getRequest();
+-    if (($destinations = $request->query->get('destinations')) && $next_destination = FieldUI::getNextDestination($destinations)) {
++    $triggering_element = $form_state->getTriggeringElement();
++
++    // Potentially redirect back to previous page rather than next destination
++    // depending on which button the user clicked.
++    if ($triggering_element['#id'] == 'previous') {
++      $entity_type = $this->entity->getEntityType();
++      $bundle = $this->entity->getFieldStorageDefinition()->getTargetEntityTypeId();
++      $node_type = $this->entity->getTargetBundle();
++      $route_parameters = [
++        'field_config' => $this->entity->id(),
++        'node_type' => $node_type,
++        'wizard' => 'true',
++        'destinations' => $this->getRequest()->query->get('destinations'),
++      ] + FieldUI::getRouteBundleParameter($entity_type, $bundle);
++      $url = new Url("entity.field_config.{$bundle}_storage_edit_form", $route_parameters);
++      $form_state->setRedirectUrl($url);
++    }
++    elseif (($destinations = $request->query->get('destinations')) && $next_destination = FieldUI::getNextDestination($destinations)) {
+       $request->query->remove('destinations');
+       $form_state->setRedirectUrl($next_destination);
+     }
+diff --git a/core/modules/field_ui/src/Form/FieldStorageConfigEditForm.php b/core/modules/field_ui/src/Form/FieldStorageConfigEditForm.php
+index bbaeb63..c92dfa6 100644
+--- a/core/modules/field_ui/src/Form/FieldStorageConfigEditForm.php
++++ b/core/modules/field_ui/src/Form/FieldStorageConfigEditForm.php
+@@ -6,6 +6,7 @@
+ use Drupal\Core\Field\FieldStorageDefinitionInterface;
+ use Drupal\Core\Form\FormStateInterface;
+ use Drupal\Core\Routing\RouteMatchInterface;
++use Drupal\Core\Url;
+ use Drupal\field\Entity\FieldConfig;
+ use Drupal\field_ui\FieldUI;
+ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+@@ -82,7 +83,7 @@ public function form(array $form, FormStateInterface $form_state) {
+     $ids = (object) array(
+       'entity_type' => $form_state->get('entity_type_id'),
+       'bundle' => $form_state->get('bundle'),
+-      'entity_id' => NULL
++      'entity_id' => NULL,
+     );
+     $entity = _field_create_entity_from_ids($ids);
+     $items = $entity->get($this->entity->getName());
+@@ -96,11 +97,13 @@ public function form(array $form, FormStateInterface $form_state) {
+       '#parents' => array(),
+       '#type' => 'fieldset',
+       '#title' => $this->t('Allowed number of values'),
+-      '#attributes' => array('class' => array(
+-        'container-inline',
+-        'fieldgroup',
+-        'form-composite'
+-      )),
++      '#attributes' => array(
++        'class' => array(
++          'container-inline',
++          'fieldgroup',
++          'form-composite',
++        ),
++      ),
+     );
+     $form['cardinality_container']['cardinality'] = array(
+       '#type' => 'select',
+@@ -121,10 +124,10 @@ public function form(array $form, FormStateInterface $form_state) {
+       '#size' => 2,
+       '#states' => array(
+         'visible' => array(
+-         ':input[name="cardinality"]' => array('value' => 'number'),
++          ':input[name="cardinality"]' => array('value' => 'number'),
+         ),
+         'disabled' => array(
+-         ':input[name="cardinality"]' => array('value' => FieldStorageDefinitionInterface::CARDINALITY_UNLIMITED),
++          ':input[name="cardinality"]' => array('value' => FieldStorageDefinitionInterface::CARDINALITY_UNLIMITED),
+         ),
+       ),
+     );
+@@ -192,7 +195,24 @@ public function save(array $form, FormStateInterface $form_state) {
+       $this->entity->save();
+       drupal_set_message($this->t('Updated field %label field settings.', array('%label' => $field_label)));
+       $request = $this->getRequest();
+-      if (($destinations = $request->query->get('destinations')) && $next_destination = FieldUI::getNextDestination($destinations)) {
++
++      // If we arrived here from the field definition step, maintain wizard.
++      if ($request->query->has('wizard')) {
++        $entity_type = $this->entity->getEntityType();
++        $target_entity_type_id = $this->entity->getTargetEntityTypeId();
++        $route_parameters = array(
++          'field_config' => $form_state->get('field_config')->id(),
++          'node_type' => $form_state->get('field_config')->getTargetBundle(),
++        ) + FieldUI::getRouteBundleParameter($entity_type, $form_state->get('bundle'));
++
++        // Persist destinations so we can continue back and forth in the wizard.
++        if ($request->query->has('destinations')) {
++          $route_parameters['destinations'] = $request->query->get('destinations');
++        }
++        $url = new Url("entity.field_config.{$target_entity_type_id}_field_edit_form", $route_parameters);
++        $form_state->setRedirectUrl($url);
++      }
++      elseif (($destinations = $request->query->get('destinations')) && $next_destination = FieldUI::getNextDestination($destinations)) {
+         $request->query->remove('destinations');
+         $form_state->setRedirectUrl($next_destination);
+       }
+diff --git a/core/modules/field_ui/src/Tests/ManageFieldsTest.php b/core/modules/field_ui/src/Tests/ManageFieldsTest.php
+index cbe9f53..3341e5c 100644
+--- a/core/modules/field_ui/src/Tests/ManageFieldsTest.php
++++ b/core/modules/field_ui/src/Tests/ManageFieldsTest.php
+@@ -115,6 +115,7 @@ function testCRUDFields() {
+     $this->manageFieldsPage();
+     $this->createField();
+     $this->updateField();
++    $this->updateFieldPrevious();
+     $this->addExistingField();
+     $this->cardinalitySettings();
+     $this->fieldListAdminPage();
+@@ -215,6 +216,49 @@ function updateField() {
+   }
+ 
+   /**
++   * Tests editing an existing field and submitting via the Previous button.
++   */
++  function updateFieldPrevious() {
++    $field_id = 'node.' . $this->contentType . '.' . $this->fieldName;
++    // Go to the field edit page.
++    $this->drupalGet('admin/structure/types/manage/' . $this->contentType . '/fields/' . $field_id . '/storage');
++    $this->assertEscaped($this->fieldLabel);
++
++    // Populate the field settings with new settings.
++    $string = 'updated dummy test string previous';
++    $edit = array(
++      'settings[test_field_storage_setting]' => $string,
++    );
++    $this->drupalPostForm(NULL, $edit, t('Save field settings'));
++
++    // Go to the field edit page with destinations to mimick adding new field.
++    $options = [
++      'query' => [
++        'destinations' => 1,
++      ],
++    ];
++    $this->drupalGet('admin/structure/types/manage/' . $this->contentType . '/fields/' . $field_id, $options);
++    $edit = array(
++      'settings[test_field_setting]' => $string,
++    );
++    $this->assertText(t('Default value'), 'Default value heading is shown');
++    $this->drupalPostForm(NULL, $edit, t('Previous'));
++
++    // Assert the field settings are correct.
++    $this->assertFieldSettings($this->contentType, $this->fieldName, $string);
++
++    // Assert redirection back to the edit page check that query string wizard
++    // is true and that the destinations have persisted.
++    $options = [
++      'query' => [
++        'wizard' => 'true',
++        'destinations' => 1,
++      ],
++    ];
++    $this->assertUrl('admin/structure/types/manage/' . $this->contentType . '/fields/' . $field_id . '/storage', $options);
++  }
++
++  /**
+    * Tests adding an existing field in another content type.
+    */
+   function addExistingField() {

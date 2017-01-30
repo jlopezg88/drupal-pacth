@@ -1,0 +1,13 @@
+diff --git a/core/modules/field_ui/src/Form/FieldConfigEditForm.php b/core/modules/field_ui/src/Form/FieldConfigEditForm.php
+index 78f4dfe..d91409f 100644
+--- a/core/modules/field_ui/src/Form/FieldConfigEditForm.php
++++ b/core/modules/field_ui/src/Form/FieldConfigEditForm.php
+@@ -75,7 +75,7 @@ public function form(array $form, FormStateInterface $form_state) {
+     $ids = (object) array(
+       'entity_type' => $this->entity->getTargetEntityTypeId(),
+       'bundle' => $this->entity->getTargetBundle(),
+-      'entity_id' => NULL,
++      'entity_id' => NULL
+     );
+     $form['#entity'] = _field_create_entity_from_ids($ids);
+     $items = $form['#entity']->get($this->entity->getName());
